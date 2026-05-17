@@ -4,9 +4,12 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <limits.h>
+#include <errno.h>
 
 #define MAX_FILES 32
 #define IO_BUF_SIZE 65536
+#define HEADER_LEN 10
+#define DEFAULT_OUTPUT "a.sau"
 
 typedef struct {
     char path[PATH_MAX];
@@ -53,10 +56,11 @@ int main(int argc, char *argv[]) {
 
         FileInfo files[MAX_FILES];
         int nfiles = 0;
+        const char *outname = DEFAULT_OUTPUT;
 
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "-o") == 0) {
-                i++;
+                if (i + 1 < argc) outname = argv[++i];
                 continue;
             }
 
@@ -77,11 +81,9 @@ int main(int argc, char *argv[]) {
             }
 
             strncpy(files[nfiles].path, argv[i], PATH_MAX);
-            
             char tmp[PATH_MAX];
             strncpy(tmp, argv[i], PATH_MAX);
             strncpy(files[nfiles].name, basename(tmp), PATH_MAX);
-            
             files[nfiles].perms = st.st_mode & 0777;
             files[nfiles].size = st.st_size;
             nfiles++;
@@ -91,12 +93,30 @@ int main(int argc, char *argv[]) {
         int toc_pos = 0;
         for (int i = 0; i < nfiles; i++) {
             toc_pos += sprintf(toc + toc_pos, "|%s,%04o,%lld|", 
-                               files[i].name, 
-                               (unsigned int)files[i].perms, 
-                               (long long)files[i].size);
+                               files[i].name, (unsigned int)files[i].perms, (long long)files[i].size);
         }
 
-        printf("TOC Olusturuldu (%d bayt): %s\n", toc_pos, toc);
+        FILE *out = fopen(outname, "wb");
+        if (!out) { perror(outname); return 1; }
+
+        char header[HEADER_LEN + 1];
+        sprintf(header, "%010d", toc_pos);
+        fwrite(header, 1, HEADER_LEN, out);
+        fwrite(toc, 1, toc_pos, out);
+
+        unsigned char buf[IO_BUF_SIZE];
+        for (int i = 0; i < nfiles; i++) {
+            FILE *fp = fopen(files[i].path, "rb");
+            if (fp) {
+                size_t n;
+                while ((n = fread(buf, 1, sizeof buf, fp)) > 0) {
+                    fwrite(buf, 1, n, out);
+                }
+                fclose(fp);
+            }
+        }
+        fclose(out);
+        printf("Dosyalar birleştirildi.\n");
 
     } else if (strcmp(argv[1], "-a") == 0) {
         printf("Cikarma modu secildi.\n");
@@ -105,6 +125,5 @@ int main(int argc, char *argv[]) {
         print_usage(argv[0]);
         return 1;
     }
-
     return 0;
 }
