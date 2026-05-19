@@ -5,11 +5,13 @@
 #include <libgen.h>
 #include <limits.h>
 #include <errno.h>
+#include <ctype.h>
 
 #define MAX_FILES 32
 #define IO_BUF_SIZE 65536
 #define HEADER_LEN 10
 #define DEFAULT_OUTPUT "a.sau"
+#define SAU_EXT ".sau"
 
 typedef struct {
     char path[PATH_MAX];
@@ -17,6 +19,12 @@ typedef struct {
     mode_t perms;
     off_t size;
 } FileInfo;
+
+typedef struct {
+    char name[PATH_MAX];
+    mode_t perms;
+    off_t size;
+} Entry;
 
 static int is_ascii_text(const char *path) {
     FILE *fp = fopen(path, "rb");
@@ -119,7 +127,39 @@ int main(int argc, char *argv[]) {
         printf("Dosyalar birleştirildi.\n");
 
     } else if (strcmp(argv[1], "-a") == 0) {
-        printf("Cikarma modu secildi.\n");
+        if (argc < 3) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            return 1;
+        }
+
+        const char *archive = argv[2];
+        const char *ext = strrchr(archive, '.');
+        if (!ext || strcmp(ext, SAU_EXT) != 0) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            return 1;
+        }
+
+        FILE *fp = fopen(archive, "rb");
+        if (!fp) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            return 1;
+        }
+
+        char header[HEADER_LEN + 1] = {0};
+        if (fread(header, 1, HEADER_LEN, fp) != HEADER_LEN) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            fclose(fp); return 1;
+        }
+
+        long long toc_len = atoll(header);
+        char *toc = malloc(toc_len + 1);
+        fread(toc, 1, toc_len, fp);
+        toc[toc_len] = '\0';
+
+        printf("Arsiv okundu. TOC icerigi: %s\n", toc);
+        free(toc);
+        fclose(fp);
+
     } else {
         fprintf(stderr, "Hata: Gecersiz secenek '%s'.\n", argv[1]);
         print_usage(argv[0]);
