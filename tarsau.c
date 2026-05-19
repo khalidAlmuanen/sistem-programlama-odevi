@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #define MAX_FILES 32
 #define IO_BUF_SIZE 65536
@@ -42,6 +43,22 @@ static int is_ascii_text(const char *path) {
     }
     fclose(fp);
     return 1;
+}
+
+static int makedirs(const char *path) {
+    char tmp[PATH_MAX];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    size_t len = strlen(tmp);
+    if (tmp[len - 1] == '/') tmp[len - 1] = 0;
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+    return 0;
 }
 
 void print_usage(const char *prog) {
@@ -133,11 +150,7 @@ int main(int argc, char *argv[]) {
         }
 
         const char *archive = argv[2];
-        const char *ext = strrchr(archive, '.');
-        if (!ext || strcmp(ext, SAU_EXT) != 0) {
-            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
-            return 1;
-        }
+        const char *destdir = (argc >= 4) ? argv[3] : NULL;
 
         FILE *fp = fopen(archive, "rb");
         if (!fp) {
@@ -146,17 +159,18 @@ int main(int argc, char *argv[]) {
         }
 
         char header[HEADER_LEN + 1] = {0};
-        if (fread(header, 1, HEADER_LEN, fp) != HEADER_LEN) {
-            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
-            fclose(fp); return 1;
-        }
-
+        fread(header, 1, HEADER_LEN, fp);
         long long toc_len = atoll(header);
         char *toc = malloc(toc_len + 1);
         fread(toc, 1, toc_len, fp);
         toc[toc_len] = '\0';
 
-        printf("Arsiv okundu. TOC icerigi: %s\n", toc);
+        if (destdir) {
+            makedirs(destdir);
+            printf("Hedef dizin hazirlandi: %s\n", destdir);
+        }
+
+        printf("TOC cozuldu, dosyalar cikartilmaya hazir.\n");
         free(toc);
         fclose(fp);
 
