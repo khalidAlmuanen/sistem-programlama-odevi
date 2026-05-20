@@ -154,23 +154,60 @@ int main(int argc, char *argv[]) {
 
         FILE *fp = fopen(archive, "rb");
         if (!fp) {
-            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            fprintf(stderr, "Arşiv dosyası uygunsuz أو bozuk!\n");
             return 1;
         }
 
         char header[HEADER_LEN + 1] = {0};
-        fread(header, 1, HEADER_LEN, fp);
+        if (fread(header, 1, HEADER_LEN, fp) != HEADER_LEN) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            fclose(fp); return 1;
+        }
         long long toc_len = atoll(header);
         char *toc = malloc(toc_len + 1);
         fread(toc, 1, toc_len, fp);
         toc[toc_len] = '\0';
 
-        if (destdir) {
-            makedirs(destdir);
-            printf("Hedef dizin hazirlandi: %s\n", destdir);
+        if (destdir) makedirs(destdir);
+
+        Entry entries[MAX_FILES];
+        int count = 0;
+        char *p = toc;
+        while (*p && count < MAX_FILES) {
+            if (*p == '|') {
+                p++;
+                char *end = strchr(p, '|');
+                if (end) {
+                    *end = '\0';
+                    unsigned int p_oct;
+                    sscanf(p, "%[^,],%o,%lld", entries[count].name, &p_oct, (long long *)&entries[count].size);
+                    entries[count].perms = (mode_t)p_oct;
+                    count++;
+                    p = end + 1;
+                } else break;
+            } else p++;
         }
 
-        printf("TOC cozuldu, dosyalar cikartilmaya hazir.\n");
+        unsigned char buf[IO_BUF_SIZE];
+        for (int i = 0; i < count; i++) {
+            char outpath[PATH_MAX];
+            if (destdir) sprintf(outpath, "%s/%s", destdir, entries[i].name);
+            else strcpy(outpath, entries[i].name);
+
+            FILE *out = fopen(outpath, "wb");
+            if (out) {
+                off_t rem = entries[i].size;
+                while (rem > 0) {
+                    size_t chunk = (rem > IO_BUF_SIZE) ? IO_BUF_SIZE : (size_t)rem;
+                    size_t got = fread(buf, 1, chunk, fp);
+                    fwrite(buf, 1, got, out);
+                    rem -= got;
+                }
+                fclose(out);
+            }
+        }
+
+        printf("Dosyalar başarıyla çıkarıldı.\n");
         free(toc);
         fclose(fp);
 
