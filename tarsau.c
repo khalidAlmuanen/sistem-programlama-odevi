@@ -204,10 +204,11 @@ int main(int argc, char *argv[]) {
                     rem -= got;
                 }
                 fclose(out);
+                chmod(outpath, entries[i].perms);
             }
         }
 
-        printf("Dosyalar başarıyla çıkarıldı.\n");
+        printf("Dosyalar başarıyla çıkarıldı ve izinler geri yüklendi.\n");
         free(toc);
         fclose(fp);
 
