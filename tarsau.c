@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #define MAX_FILES 32
+#define MAX_TOTAL_BYTES (200LL * 1024LL * 1024LL)
 #define IO_BUF_SIZE 65536
 #define HEADER_LEN 10
 #define DEFAULT_OUTPUT "a.sau"
@@ -82,6 +83,7 @@ int main(int argc, char *argv[]) {
         FileInfo files[MAX_FILES];
         int nfiles = 0;
         const char *outname = DEFAULT_OUTPUT;
+        long long total_size = 0;
 
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "-o") == 0) {
@@ -102,6 +104,12 @@ int main(int argc, char *argv[]) {
 
             if (!is_ascii_text(argv[i])) {
                 fprintf(stderr, "%s giriş dosyasının formatı uyumsuzdur!\n", argv[i]);
+                return 1;
+            }
+
+            total_size += st.st_size;
+            if (total_size > MAX_TOTAL_BYTES) {
+                fprintf(stderr, "Hata: Toplam dosya boyutu 200MB limitini asiyor.\n");
                 return 1;
             }
 
@@ -149,12 +157,23 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        if (argc > 4) {
+            fprintf(stderr, "Hata: -a parametresinden sonra en fazla 2 parametre alinabilir.\n");
+            return 1;
+        }
+
         const char *archive = argv[2];
-        const char *destdir = (argc >= 4) ? argv[3] : NULL;
+        const char *destdir = (argc == 4) ? argv[3] : NULL;
+
+        const char *ext = strrchr(archive, '.');
+        if (!ext || strcmp(ext, SAU_EXT) != 0) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            return 1;
+        }
 
         FILE *fp = fopen(archive, "rb");
         if (!fp) {
-            fprintf(stderr, "Arşiv dosyası uygunsuz أو bozuk!\n");
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
             return 1;
         }
 
@@ -163,9 +182,25 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
             fclose(fp); return 1;
         }
+
+        for (int i = 0; i < HEADER_LEN; i++) {
+            if (!isdigit(header[i])) {
+                fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+                fclose(fp); return 1;
+            }
+        }
+
         long long toc_len = atoll(header);
+        if (toc_len <= 0) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            fclose(fp); return 1;
+        }
+
         char *toc = malloc(toc_len + 1);
-        fread(toc, 1, toc_len, fp);
+        if (fread(toc, 1, toc_len, fp) != (size_t)toc_len) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            free(toc); fclose(fp); return 1;
+        }
         toc[toc_len] = '\0';
 
         if (destdir) makedirs(destdir);
@@ -180,12 +215,20 @@ int main(int argc, char *argv[]) {
                 if (end) {
                     *end = '\0';
                     unsigned int p_oct;
-                    sscanf(p, "%[^,],%o,%lld", entries[count].name, &p_oct, (long long *)&entries[count].size);
+                    if (sscanf(p, "%[^,],%o,%lld", entries[count].name, &p_oct, (long long *)&entries[count].size) != 3) {
+                        fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+                        free(toc); fclose(fp); return 1;
+                    }
                     entries[count].perms = (mode_t)p_oct;
                     count++;
                     p = end + 1;
                 } else break;
             } else p++;
+        }
+
+        if (count == 0) {
+            fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
+            free(toc); fclose(fp); return 1;
         }
 
         unsigned char buf[IO_BUF_SIZE];
@@ -200,6 +243,7 @@ int main(int argc, char *argv[]) {
                 while (rem > 0) {
                     size_t chunk = (rem > IO_BUF_SIZE) ? IO_BUF_SIZE : (size_t)rem;
                     size_t got = fread(buf, 1, chunk, fp);
+                    if (got == 0) break;
                     fwrite(buf, 1, got, out);
                     rem -= got;
                 }
@@ -213,7 +257,7 @@ int main(int argc, char *argv[]) {
         fclose(fp);
 
     } else {
-        fprintf(stderr, "Hata: Gecersiz secenek '%s'.\n", argv[1]);
+        fprintf(stderr, "Hata: Geçersiz seçenek '%s'.\n", argv[1]);
         print_usage(argv[0]);
         return 1;
     }
