@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE 700
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,7 +52,7 @@ static int makedirs(const char *path) {
     char tmp[PATH_MAX];
     snprintf(tmp, sizeof tmp, "%s", path);
     size_t len = strlen(tmp);
-    if (tmp[len - 1] == '/') tmp[len - 1] = 0;
+    if (len > 0 && tmp[len - 1] == '/') tmp[len - 1] = 0;
     for (char *p = tmp + 1; *p; p++) {
         if (*p == '/') {
             *p = 0;
@@ -62,7 +64,7 @@ static int makedirs(const char *path) {
     return 0;
 }
 
-void print_usage(const char *prog) {
+static void print_usage(const char *prog) {
     fprintf(stderr, "Kullanim:\n");
     fprintf(stderr, "  %s -b dosya1 [dosya2 ...] [-o arsiv.sau]\n", prog);
     fprintf(stderr, "  %s -a arsiv.sau [hedef_dizin]\n", prog);
@@ -125,8 +127,9 @@ int main(int argc, char *argv[]) {
         char toc[8192] = {0};
         int toc_pos = 0;
         for (int i = 0; i < nfiles; i++) {
-            toc_pos += sprintf(toc + toc_pos, "|%s,%04o,%lld|", 
+            int written = sprintf(toc + toc_pos, "|%s,%04o,%lld|", 
                                files[i].name, (unsigned int)files[i].perms, (long long)files[i].size);
+            toc_pos += written;
         }
 
         FILE *out = fopen(outname, "wb");
@@ -135,7 +138,7 @@ int main(int argc, char *argv[]) {
         char header[HEADER_LEN + 1];
         sprintf(header, "%010d", toc_pos);
         fwrite(header, 1, HEADER_LEN, out);
-        fwrite(toc, 1, toc_pos, out);
+        fwrite(toc, 1, (size_t)toc_pos, out);
 
         unsigned char buf[IO_BUF_SIZE];
         for (int i = 0; i < nfiles; i++) {
@@ -184,20 +187,21 @@ int main(int argc, char *argv[]) {
         }
 
         for (int i = 0; i < HEADER_LEN; i++) {
-            if (!isdigit(header[i])) {
+            if (!isdigit((unsigned char)header[i])) {
                 fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
                 fclose(fp); return 1;
             }
         }
 
         long long toc_len = atoll(header);
-        if (toc_len <= 0) {
+        if (toc_len <= 0 || toc_len > 1024 * 1024) {
             fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
             fclose(fp); return 1;
         }
 
-        char *toc = malloc(toc_len + 1);
-        if (fread(toc, 1, toc_len, fp) != (size_t)toc_len) {
+        char *toc = malloc((size_t)toc_len + 1);
+        if (!toc) { perror("malloc"); fclose(fp); return 1; }
+        if (fread(toc, 1, (size_t)toc_len, fp) != (size_t)toc_len) {
             fprintf(stderr, "Arşiv dosyası uygunsuz veya bozuk!\n");
             free(toc); fclose(fp); return 1;
         }
@@ -233,26 +237,30 @@ int main(int argc, char *argv[]) {
 
         unsigned char buf[IO_BUF_SIZE];
         for (int i = 0; i < count; i++) {
-            char outpath[PATH_MAX];
-            if (destdir) sprintf(outpath, "%s/%s", destdir, entries[i].name);
-            else strcpy(outpath, entries[i].name);
+            char outpath[PATH_MAX * 2];
+            if (destdir) snprintf(outpath, sizeof(outpath), "%s/%s", destdir, entries[i].name);
+            else strncpy(outpath, entries[i].name, sizeof(outpath));
 
             FILE *out = fopen(outpath, "wb");
             if (out) {
                 off_t rem = entries[i].size;
                 while (rem > 0) {
-                    size_t chunk = (rem > IO_BUF_SIZE) ? IO_BUF_SIZE : (size_t)rem;
+                    size_t chunk = (rem > (off_t)IO_BUF_SIZE) ? IO_BUF_SIZE : (size_t)rem;
                     size_t got = fread(buf, 1, chunk, fp);
                     if (got == 0) break;
                     fwrite(buf, 1, got, out);
-                    rem -= got;
+                    rem -= (off_t)got;
                 }
                 fclose(out);
                 chmod(outpath, entries[i].perms);
             }
         }
 
-        printf("Dosyalar başarıyla çıkarıldı ve izinler geri yüklendi.\n");
+        if (destdir) printf("%s dizininde ", destdir);
+        for (int i = 0; i < count; i++) {
+            printf("%s%s", entries[i].name, (i == count - 1) ? "" : (i == count - 2) ? " ve " : ", ");
+        }
+        printf(" dosyaları açıldı.\n");
         free(toc);
         fclose(fp);
 
